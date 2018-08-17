@@ -2,14 +2,8 @@ pragma solidity ^0.4.17;
     import "github.com/OpenZeppelin/openzeppelin-solidity/contracts/math/SafeMath.sol";
 
 
-contract Escrow { 
-    
-    event Calc(
-        uint indexed originalContributionAmount,
-        uint indexed originalContributionPercent,
-        uint indexed percentOfCurrentFunds
-    );
-    
+contract Escrow {
+
     using SafeMath for uint256;
 
     // state
