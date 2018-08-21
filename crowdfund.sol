@@ -101,7 +101,7 @@ contract Escrow {
         }
     }
 
-    function () public payable isOnGoing {
+    function () public payable onlyOnGoing {
         require((msg.value.add(address(this).balance)) <= raiseGoal, "Sorry! This contribution exceeds the raise goal.");
         contributors.push(msg.sender);
         if (contributions[msg.sender] > 0) {
@@ -109,9 +109,12 @@ contract Escrow {
         } else {
             contributions[msg.sender] = msg.value;
         }
+        if (msg.value.add(address(this).balance) == raiseGoal) {
+            isRaiseGoalReached = true;
+        }
     }
     
-    function voteRefund() public onlyContributor {
+    function voteRefund() public onlyContributor onlyReached {
         refundVoters.push(msg.sender);
     }
 
@@ -119,10 +122,6 @@ contract Escrow {
         if(!etherReceiver.send(amount)){
             revert();
         }
-    }
-
-    function getRaiseGoal() public view returns(uint){
-        return raiseGoal;
     }
 
     function buildProportionalContributions() private {
@@ -139,8 +138,14 @@ contract Escrow {
         }
     }
 
-    function refund() public {
-        if (isFailed() || isMajorityVoting(refundVoters)) {
+    function refundWhenFailed() public {
+        if (isFailed()) {
+            refundRemainingProportionally();
+        }
+    }
+
+    function refund() public onlyReached {
+        if (isMajorityVoting(refundVoters)) {
             refundRemainingProportionally();
         }
     }
@@ -163,11 +168,15 @@ contract Escrow {
     }
 
     function isFailed() public view {
-        return (now >= deadline) && (raiseGoal <= address(this).balance);
+        return (now >= deadline) && !isRaiseGoalReached;
     }
 
-    modifier isOnGoing() {
-        if ((now <= deadline) && (raiseGoal <= address(this).balance)) _;
+    modifier onlyReached() {
+        if (isRaiseGoalReached) _;
+    }
+    
+    modifier onlyOnGoing() {
+        if ((now <= deadline) && !isRaiseGoalReached) _;
     }
 
     modifier onlyContributor() {
