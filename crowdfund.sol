@@ -1,106 +1,181 @@
-pragma solidity ^0.4.17;
-    import "github.com/OpenZeppelin/openzeppelin-solidity/contracts/math/SafeMath.sol";
+// TODO 
+// 1. Allow re-tries for milestone payout requests
+pragma solidity ^0.4.24;
+import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 
 
 contract Escrow {
 
     using SafeMath for uint256;
 
+    struct Milestone {
+        uint amount;
+        address[] noVoters;
+        uint payoutRequestVoteDeadline;
+        bool paid;
+    }
+
     // state
+
+    // stored in minutes;
+    uint public milestoneVotingPeriod;
+    // stored in minutes
+    uint public deadline;
+    // goal in Wei
     uint public raiseGoal;
-    uint public currentFunds;
-    address receipient;
-    mapping(address => uint) private contributions;
-    mapping(address => uint) private proportionalCurContribution;
+    address public beneficiary;
+    // contributions are disabled if the contract has been refunded
+    bool public isArchived;
+    bool public isRaiseGoalReached;
+    // authorized addresses to ask for milestone payouts
+    // constructor ensures that all values combined equal raiseGoal
 
-    address[] private contributors;
-    address[] public refundVoters; 
+    mapping(address => uint) public contributions;
+    mapping(address => uint) public proportionalContribution;
 
-    constructor(uint raiseGoalAmount) public {
+    address[] public contributors;
+    address[] public refundVoters;
+    address[] public trustees;
+    Milestone[] public milestones;
+
+    constructor(
+        uint raiseGoalAmount, 
+        address payOutAddress, 
+        address[] trusteesAddresses, 
+        uint[] allMilestones,
+        uint durationInMinutes,
+        uint milestoneVotingPeriodInMinutes) 
+    public {
+        // ensure that cumalative milestone payouts equal raiseGoalAmount
+        // implicitly ensure that there is at least one milestone stage per escrow
+        uint memory milestoneTotal = 0;
+        for (uint i = 0; i < allMilestones.length; i++) {
+            milestoneTotal += allMilestones[i];
+            milestones.push(Milestone({
+                amount: allMilestones[i],
+                noVoters: [],
+                paid: false
+            }));
+        }
+        require((milestoneTotal == raiseGoalAmount), "milestone total must equal raise goal");
+
         raiseGoal = raiseGoalAmount;
-        currentFunds = 0;
+        beneficiary = payOutAddress;
+        trustees = trusteesAddresses;
+        deadline = now + durationInMinutes * 1 minutes;
+        milestoneVotingPeriod = milestoneVotingPeriodInMinutes * 1 minutes;
     }
 
-    function contributionStaysUnderRaiseGoal(uint amount) private view returns (bool) {
-        require((amount.add(currentFunds)) <= raiseGoal, "Sorry! This contribution exceeds the raise goal.");
-        return true;
-    }
-
-    function () public payable {
-        if (contributionStaysUnderRaiseGoal(msg.value)) {
-            contributors.push(msg.sender);
-            if (contributions[msg.sender] > 0) {
-                contributions[msg.sender] += msg.value;
-            } else {
-                contributions[msg.sender] = msg.value;
+    function payMilestonePayout(uint index) public {
+        if (milestones[i].payoutRequestVoteDeadline >= now) {
+            if (!isMajorityVoting(milestones[i].noVoters)) {
+                fundTransfer(beneficiary, milestones[i].amount);
             }
-            currentFunds += msg.value;
         }
     }
 
+    function voteNoMilestonePayout(uint index) public onlyContributor {
+        milestones[i].noVoters.push(msg.sender);
+    }
+
+    function requestMilestonePayout (uint index) public onlyTrustee {
+        bool memory lowestIndexPaid;
+        for (uint i = 0; i < milestones.length; i++) {
+            if (milestones[i].paid) {
+                lowestIndexUnpaid = i;
+            }
+        }
+        // prevent requesting paid milestones
+        if (milestones[index].paid) {
+            revert("Milestone already paid");
+        }
+        // prevent requesting future milestones
+        if (index != lowestIndexPaid) {
+            revert("Earlier milestone has not yet been paid");
+        }
+
+        if (!milestones[i].payoutRequestVoteDeadline) {
+            milestones[i].payoutRequestVoteDeadline = now + milestoneVotingPeriod;
+        } else {
+            revert("Milestone payment request has already been set.");
+        }
+    }
+
+    function () public payable isOnGoing {
+        require((msg.value.add(address(this).balance)) <= raiseGoal, "Sorry! This contribution exceeds the raise goal.");
+        contributors.push(msg.sender);
+        if (contributions[msg.sender] > 0) {
+            contributions[msg.sender] += msg.value;
+        } else {
+            contributions[msg.sender] = msg.value;
+        }
+    }
+    
     function voteRefund() public onlyContributor {
         refundVoters.push(msg.sender);
     }
 
-    function isMajorityVotingToRefund() public view returns (bool) {
-        uint valueVotingToRefund = 0;
-        for (uint i = 0; i < refundVoters.length; i++) {
-            valueVotingToRefund += contributions[refundVoters[i]];
-            }
-        return valueVotingToRefund.mul(2) > currentFunds;
-    }
-    
-    function fundtransfer(address etherreceiver, uint256 amount) private {
-        if(!etherreceiver.send(amount)){
-           revert();
-        }    
-    }
-    
-    function getRaiseGoal() public view returns(uint){
-        return raiseGoal;
-    }
-    
-    function buildProportionalContributions() private {
-        for (uint i = 0; i < contributors.length; i++) {
-            uint originalContributionAmount = contributions[contributors[i]];
-            proportionalCurContribution[contributors[i]] = originalContributionAmount.mul(currentFunds).div(raiseGoal);
+    function fundTransfer(address etherReceiver, uint256 amount) private {
+        if(!etherReceiver.send(amount)){
+            revert();
         }
     }
 
+    function getRaiseGoal() public view returns(uint){
+        return raiseGoal;
+    }
 
-    function refundRemainingProportionally()  private {
+    function buildProportionalContributions() private {
+        for (uint i = 0; i < contributors.length; i++) {
+            uint originalContributionAmount = contributions[contributors[i]];
+            proportionalContribution[contributors[i]] = originalContributionAmount.mul(address(this).balance).div(raiseGoal);
+        }
+    }
+
+    function refundRemainingProportionally() private {
         buildProportionalContributions();
         for (uint i = 0; i < contributors.length; i++) {
-            fundtransfer(contributors[i], proportionalCurContribution[contributors[i]]);
+            fundTransfer(contributors[i], proportionalContribution[contributors[i]]);
         }
     }
 
     function refund() public {
-        require(isMajorityVotingToRefund(), "Majority is not voting to refund");
-        refundRemainingProportionally();
+        if (isFailed() || isMajorityVoting(refundVoters)) {
+            refundRemainingProportionally();
+        }
     }
-    
-    function isCallerContributor() public view returns (bool) {
-        bool addressFound = false;
-        for (uint i = 0; i < contributors.length; i++) {
-            if (msg.sender == contributors[i]) {
-                addressFound = true;
-                break;
+
+    function isMajorityVoting(address[] voters) public view returns (bool) {
+        uint memory valueVoting = 0;
+        for (uint i = 0; i < voters.length; i++) {
+            valueVoting += contributions[voters[i]];
+        }
+        return valueVoting.mul(2) > address(this).balance;
+    }
+
+    function isCallerInAddressArray(address[] addressArray) public view returns (bool) {
+        for (uint i = 0; i < addressArray.length; i++) {
+            if (msg.sender == addressArray[i]) {
+                return true;
             }
         }
-        return addressFound;
+        return false;
+    }
+
+    function isFailed() public view {
+        return (now >= deadline) && (raiseGoal <= address(this).balance);
+    }
+
+    modifier isOnGoing() {
+        if ((now <= deadline) && (raiseGoal <= address(this).balance)) _;
     }
 
     modifier onlyContributor() {
-        bool isContributor = isCallerContributor();
-        if (isContributor) {
-            _;
-        } else {
-            revert("Caller is not a contributor");
-        }
+        if (isCallerInAddressArray(contributors)) _;
     }
-   
+
+    modifier onlyTrustee() {
+        if (isCallerInAddressArray(trustees)) _;
+    }
+
 }
-
-
-
