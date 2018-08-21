@@ -48,12 +48,13 @@ contract Escrow {
     public {
         // ensure that cumalative milestone payouts equal raiseGoalAmount
         // implicitly ensure that there is at least one milestone stage per escrow
-        uint memory milestoneTotal = 0;
+        uint milestoneTotal = 0;
         for (uint i = 0; i < allMilestones.length; i++) {
             milestoneTotal += allMilestones[i];
             milestones.push(Milestone({
                 amount: allMilestones[i],
-                noVoters: [],
+                noVoters: new address[](0),
+                payoutRequestVoteDeadline: 0,
                 paid: false
             }));
         }
@@ -67,22 +68,22 @@ contract Escrow {
     }
 
     function payMilestonePayout(uint index) public {
-        if (milestones[i].payoutRequestVoteDeadline >= now) {
-            if (!isMajorityVoting(milestones[i].noVoters)) {
-                fundTransfer(beneficiary, milestones[i].amount);
+        if (milestones[index].payoutRequestVoteDeadline >= now) {
+            if (!isMajorityVoting(milestones[index].noVoters)) {
+                fundTransfer(beneficiary, milestones[index].amount);
             }
         }
     }
 
     function voteNoMilestonePayout(uint index) public onlyContributor {
-        milestones[i].noVoters.push(msg.sender);
+        milestones[index].noVoters.push(msg.sender);
     }
 
     function requestMilestonePayout (uint index) public onlyTrustee {
-        bool memory lowestIndexPaid;
+        uint lowestIndexPaid;
         for (uint i = 0; i < milestones.length; i++) {
             if (milestones[i].paid) {
-                lowestIndexUnpaid = i;
+                lowestIndexPaid = i;
             }
         }
         // prevent requesting paid milestones
@@ -94,8 +95,8 @@ contract Escrow {
             revert("Earlier milestone has not yet been paid");
         }
 
-        if (!milestones[i].payoutRequestVoteDeadline) {
-            milestones[i].payoutRequestVoteDeadline = now + milestoneVotingPeriod;
+        if (milestones[index].payoutRequestVoteDeadline != 0) {
+            milestones[index].payoutRequestVoteDeadline = now + milestoneVotingPeriod;
         } else {
             revert("Milestone payment request has already been set.");
         }
@@ -151,7 +152,7 @@ contract Escrow {
     }
 
     function isMajorityVoting(address[] voters) public view returns (bool) {
-        uint memory valueVoting = 0;
+        uint valueVoting = 0;
         for (uint i = 0; i < voters.length; i++) {
             valueVoting += contributions[voters[i]];
         }
@@ -167,8 +168,8 @@ contract Escrow {
         return false;
     }
 
-    function isFailed() public view {
-        return (now >= deadline) && !isRaiseGoalReached;
+    function isFailed() public view returns (bool) {
+        return ((now >= deadline) && !isRaiseGoalReached);
     }
 
     modifier onlyReached() {
