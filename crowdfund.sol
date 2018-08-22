@@ -1,5 +1,3 @@
-// TODO 
-// 1. Allow re-tries for milestone payout requests
 pragma solidity ^0.4.24;
 import "openzeppelin-solidity/contracts/math/SafeMath.sol";
 
@@ -65,6 +63,7 @@ contract Escrow {
         trustees = trusteesAddresses;
         deadline = now + durationInMinutes * 1 minutes;
         milestoneVotingPeriod = milestoneVotingPeriodInMinutes * 1 minutes;
+        isArchived = false;
     }
 
     function payMilestonePayout(uint index) public {
@@ -91,14 +90,20 @@ contract Escrow {
             revert("Milestone already paid");
         }
         // prevent requesting future milestones
-        if (index != lowestIndexPaid) {
+        else if (index != lowestIndexPaid) {
             revert("Earlier milestone has not yet been paid");
         }
-
-        if (milestones[index].payoutRequestVoteDeadline != 0) {
+        // revert if an existing voting period is open
+        else if (milestones[index].payoutRequestVoteDeadline != 0 && milestones[index].payoutRequestVoteDeadline < now) {
+            revert("Milestone voting period is still in progress.");
+        }
+        // if the payoutRequestVoteDealine has passed and majority voted against it previously, begin the grace period with 2 times the deadline
+        else if (milestones[index].payoutRequestVoteDeadline >= now && isMajorityVoting(milestones[index].noVoters)) {
+            milestones[index].payoutRequestVoteDeadline = now + (milestoneVotingPeriod * 2);
+        }
+        // begin grace period for contributors to vote no on milestone payout
+        else if (milestones[index].payoutRequestVoteDeadline != 0) {
             milestones[index].payoutRequestVoteDeadline = now + milestoneVotingPeriod;
-        } else {
-            revert("Milestone payment request has already been set.");
         }
     }
 
@@ -137,6 +142,7 @@ contract Escrow {
         for (uint i = 0; i < contributors.length; i++) {
             fundTransfer(contributors[i], proportionalContribution[contributors[i]]);
         }
+        isArchived = true;
     }
 
     function refundWhenFailed() public {
